@@ -1,0 +1,19 @@
+[settings]
+timeout_ms = 2500
+concurrency = 16
+output = "table"
+
+[[servers]]
+id = "custom-singapore"
+name = "Custom Singapore"
+address = "203.0.113.10"
+region = "asia"
+country = "SG"
+provider = "Example"
+enabled = true
+tags = ["apac", "custom"]
+
+[[overrides]]
+id = "google-primary"
+enabled = false
+tags = ["disabled"]
