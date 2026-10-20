@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 - 2026-10-20
 
 - Add `prop completions <SHELL>` for Bash, Zsh, Fish, and PowerShell, with activation instructions in the README.
+- Generate completions even when the configuration file is missing or invalid.
+- Use Bash activation compatible with the Bash 3 version included in macOS, and verify activation in all four shells in CI.
 
 ## 0.1.2 - 2026-10-20
 

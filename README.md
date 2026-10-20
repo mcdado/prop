@@ -6,18 +6,18 @@
 
 ### Prebuilt releases
 
-Install prop 0.1.2 using the installer for your system.
+Install prop 0.1.3 using the installer for your system.
 
 #### macOS and Linux
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mcdado/prop/releases/download/v0.1.2/prop-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mcdado/prop/releases/download/v0.1.3/prop-installer.sh | sh
 ```
 
 #### Windows (PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/mcdado/prop/releases/download/v0.1.2/prop-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/mcdado/prop/releases/download/v0.1.3/prop-installer.ps1 | iex"
 ```
 
 For manual installation, download the archive for your platform from [GitHub Releases](https://github.com/mcdado/prop/releases), verify its SHA-256 checksum, extract it, and put `prop` (or `prop.exe` on Windows) in a directory on your `PATH`.
@@ -66,8 +66,6 @@ cargo run -- check example.com
 ```
 
 ### Shell completions
-
-Until the next release, install from source to use shell completions.
 
 `prop completions <SHELL>` prints a completion script for `bash`, `zsh`, `fish`, or `powershell`. Completions include subcommands and option names, plus `--record-type` values in Bash, Zsh, and Fish.
 
@@ -255,8 +253,8 @@ To prepare a release:
 3. Create and push an annotated tag matching the version, for example:
 
    ```bash
-   git tag -a v0.1.2 -m "prop 0.1.2"
-   git push origin v0.1.2
+   git tag -a v0.1.3 -m "prop 0.1.3"
+   git push origin v0.1.3
    ```
 
 4. Wait for the Release workflow to build the archives, installers, source package, and checksums and attach them to a **draft** GitHub Release.
