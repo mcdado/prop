@@ -5,13 +5,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures::{StreamExt, stream};
-use hickory_client::client::{AsyncClient, ClientHandle};
+use hickory_client::client::AsyncClient;
 use hickory_client::udp::UdpClientStream;
 use hickory_proto::iocompat::AsyncIoTokioAsStd;
-use hickory_proto::op::Message;
-#[cfg(test)]
-use hickory_proto::op::{MessageType, OpCode, Query};
+use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
+use hickory_proto::xfer::{DnsHandle, DnsRequestOptions, FirstAnswer};
 use serde::Serialize;
 use tokio::time::timeout;
 
@@ -52,11 +51,13 @@ pub struct QueryReport {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryStatus {
     Success,
     NoRecords,
+    #[serde(rename = "nxdomain")]
+    NxDomain,
     Error,
 }
 
@@ -178,14 +179,38 @@ async fn query_resolver(
     record_type: RecordType,
     settings: &SettingsConfig,
 ) -> QueryReport {
-    match query_with_timeout(resolver.address, name.clone(), record_type, settings).await {
-        Ok((message, duration_ms)) => {
-            let mut answers = normalized_answers(&message.answers(), record_type);
-            answers.sort();
-            answers.dedup();
+    let response = query_endpoint_with_timeout(
+        SocketAddr::new(resolver.address, DNS_PORT),
+        name.clone(),
+        record_type,
+        true,
+        settings,
+    )
+    .await;
+    resolver_report(resolver, record_type, response)
+}
 
-            let ttl = message.answers().iter().map(Record::ttl).min();
-            let status = if answers.is_empty() {
+fn resolver_report(
+    resolver: &ResolverConfig,
+    record_type: RecordType,
+    response: Result<(Message, u128)>,
+) -> QueryReport {
+    match response {
+        Ok((message, duration_ms)) => {
+            let nonexistent = message.response_code() == ResponseCode::NXDomain;
+            let answers = if nonexistent {
+                vec![]
+            } else {
+                normalized_answers(message.answers(), record_type)
+            };
+            let ttl = if nonexistent {
+                None
+            } else {
+                message.answers().iter().map(Record::ttl).min()
+            };
+            let status = if nonexistent {
+                QueryStatus::NxDomain
+            } else if answers.is_empty() {
                 QueryStatus::NoRecords
             } else {
                 QueryStatus::Success
@@ -211,63 +236,84 @@ async fn query_resolver(
     }
 }
 
-async fn query_with_timeout(
-    server: IpAddr,
+async fn query_endpoint_with_timeout(
+    addr: SocketAddr,
     name: Name,
     record_type: RecordType,
+    recursion_desired: bool,
     settings: &SettingsConfig,
 ) -> Result<(Message, u128)> {
     let deadline = Duration::from_millis(settings.timeout_ms);
-    timeout(deadline, query_dns_server(server, name, record_type))
-        .await
-        .map_err(|_| anyhow!("query timed out after {}ms", settings.timeout_ms))?
+    timeout(
+        deadline,
+        query_dns_server(addr, name, record_type, recursion_desired),
+    )
+    .await
+    .map_err(|_| anyhow!("query timed out after {}ms", settings.timeout_ms))?
 }
 
 async fn query_dns_server(
-    server: IpAddr,
+    addr: SocketAddr,
     name: Name,
     record_type: RecordType,
+    recursion_desired: bool,
 ) -> Result<(Message, u128)> {
-    let addr = SocketAddr::new(server, DNS_PORT);
     let stream = UdpClientStream::<tokio::net::UdpSocket>::new(addr);
-    let (mut client, background) = AsyncClient::connect(stream)
+    let (client, background) = AsyncClient::connect(stream)
         .await
         .with_context(|| format!("failed to connect to {addr}"))?;
     tokio::spawn(background);
 
     let start = Instant::now();
-    let mut response: Message = client
-        .query(name.clone(), DNSClass::IN, record_type)
+    let mut response = send_query(&client, name.clone(), record_type, recursion_desired)
         .await
-        .with_context(|| format!("query to {addr} failed"))?
-        .into();
+        .with_context(|| format!("query to {addr} failed"))?;
 
     if response.truncated() {
-        response = query_dns_server_tcp(server, name, record_type).await?;
+        response = query_dns_server_tcp(addr, name, record_type, recursion_desired).await?;
+    }
+
+    if !matches!(
+        response.response_code(),
+        ResponseCode::NoError | ResponseCode::NXDomain
+    ) {
+        bail!("DNS server {addr} returned {}", response.response_code());
     }
 
     Ok((response, start.elapsed().as_millis()))
 }
 
 async fn query_dns_server_tcp(
-    server: IpAddr,
+    addr: SocketAddr,
     name: Name,
     record_type: RecordType,
+    recursion_desired: bool,
 ) -> Result<Message> {
-    let addr = SocketAddr::new(server, DNS_PORT);
     let (stream, sender) =
         hickory_client::tcp::TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
     let client = AsyncClient::new(stream, sender, None);
-    let (mut client, background) = client
+    let (client, background) = client
         .await
         .with_context(|| format!("failed to connect over TCP to {addr}"))?;
     tokio::spawn(background);
 
-    client
-        .query(name, DNSClass::IN, record_type)
+    send_query(&client, name, record_type, recursion_desired)
         .await
         .with_context(|| format!("tcp query to {addr} failed"))
-        .map(Into::into)
+}
+
+async fn send_query(
+    client: &AsyncClient,
+    name: Name,
+    record_type: RecordType,
+    recursion_desired: bool,
+) -> Result<Message> {
+    let mut query = Query::query(name, record_type);
+    query.set_query_class(DNSClass::IN);
+    let mut options = DnsRequestOptions::default();
+    options.recursion_desired = recursion_desired;
+    options.use_edns = client.is_using_edns();
+    Ok(client.lookup(query, options).first_answer().await?.into())
 }
 
 async fn query_first_success(
@@ -278,8 +324,24 @@ async fn query_first_success(
 ) -> Result<Message> {
     let mut last_error = None;
     for server in servers {
-        match query_with_timeout(server.address, name.clone(), record_type, settings).await {
-            Ok((response, _)) => return Ok(response),
+        match query_endpoint_with_timeout(
+            SocketAddr::new(server.address, DNS_PORT),
+            name.clone(),
+            record_type,
+            false,
+            settings,
+        )
+        .await
+        {
+            Ok((response, _)) => {
+                if response.response_code() != ResponseCode::NoError {
+                    bail!(
+                        "root server returned {} for {name}",
+                        response.response_code()
+                    );
+                }
+                return Ok(response);
+            }
             Err(error) => last_error = Some(error),
         }
     }
@@ -335,27 +397,64 @@ async fn query_parent_server(
     fqdn: &Name,
     settings: &SettingsConfig,
 ) -> ParentTraceResult {
-    match query_with_timeout(server.address, fqdn.clone(), RecordType::NS, settings).await {
-        Ok((message, duration_ms)) => ParentTraceResult {
-            server_name: server.name,
-            server_address: server.address,
-            duration_ms: Some(duration_ms),
-            ns_records: normalized_answers(&message.answers(), RecordType::NS),
-            glue_records: normalized_answers(&message.additionals(), RecordType::A)
+    let response = query_endpoint_with_timeout(
+        SocketAddr::new(server.address, DNS_PORT),
+        fqdn.clone(),
+        RecordType::NS,
+        false,
+        settings,
+    )
+    .await;
+    parent_report(server, response)
+}
+
+fn parent_report(server: RootServer, response: Result<(Message, u128)>) -> ParentTraceResult {
+    let mut report = ParentTraceResult {
+        server_name: server.name,
+        server_address: server.address,
+        duration_ms: None,
+        ns_records: vec![],
+        glue_records: vec![],
+        error: None,
+    };
+    match response {
+        Ok((message, duration_ms)) => {
+            report.duration_ms = Some(duration_ms);
+            if message.response_code() != ResponseCode::NoError {
+                report.error = Some(format!("DNS response {}", message.response_code()));
+                return report;
+            }
+            let ns_records: Vec<_> = message
+                .name_servers()
+                .iter()
+                .chain(message.answers())
+                .filter(|record| record.record_type() == RecordType::NS)
+                .cloned()
+                .collect();
+            report.ns_records = normalized_answers(&ns_records, RecordType::NS);
+            if report.ns_records.is_empty() {
+                report.error = Some("response did not include a parent delegation".into());
+                return report;
+            }
+            let glue: Vec<_> = message
+                .additionals()
+                .iter()
+                .filter(|record| {
+                    report
+                        .ns_records
+                        .iter()
+                        .any(|name| name.eq_ignore_ascii_case(&record.name().to_utf8()))
+                })
+                .cloned()
+                .collect();
+            report.glue_records = normalized_answers(&glue, RecordType::A)
                 .into_iter()
-                .chain(normalized_answers(&message.additionals(), RecordType::AAAA))
-                .collect(),
-            error: None,
-        },
-        Err(error) => ParentTraceResult {
-            server_name: server.name,
-            server_address: server.address,
-            duration_ms: None,
-            ns_records: vec![],
-            glue_records: vec![],
-            error: Some(error.to_string()),
-        },
+                .chain(normalized_answers(&glue, RecordType::AAAA))
+                .collect();
+        }
+        Err(error) => report.error = Some(error.to_string()),
     }
+    report
 }
 
 fn ensure_fqdn(name: &str) -> Result<Name> {
@@ -418,95 +517,4 @@ fn normalized_answers(records: &[Record], record_type: RecordType) -> Vec<String
 }
 
 #[cfg(test)]
-pub fn build_query_message(name: &Name, record_type: RecordType) -> Message {
-    let mut message = Message::new();
-    message
-        .set_id(0)
-        .set_message_type(MessageType::Query)
-        .set_op_code(OpCode::Query)
-        .add_query(Query::query(name.clone(), record_type))
-        .set_recursion_desired(false);
-    message
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hickory_proto::rr::Name;
-    use hickory_proto::rr::rdata::{A, CNAME};
-
-    #[tokio::test]
-    async fn rejects_invalid_settings_before_querying() {
-        for settings in [
-            SettingsConfig {
-                concurrency: 0,
-                ..SettingsConfig::default()
-            },
-            SettingsConfig {
-                timeout_ms: 0,
-                ..SettingsConfig::default()
-            },
-        ] {
-            assert!(
-                run_check("example.com", RecordType::A, vec![], &settings)
-                    .await
-                    .is_err()
-            );
-            assert!(trace_parent("example.com", &settings).await.is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn rejects_an_empty_enabled_resolver_selection() {
-        let disabled = ResolverConfig {
-            id: "disabled".into(),
-            name: "Disabled".into(),
-            address: "127.0.0.1".parse().unwrap(),
-            region: "local".into(),
-            country: "XX".into(),
-            provider: "Test".into(),
-            enabled: false,
-            tags: vec![],
-        };
-        let error = run_check(
-            "example.com",
-            RecordType::A,
-            vec![disabled],
-            &SettingsConfig::default(),
-        )
-        .await
-        .unwrap_err();
-        assert!(error.to_string().contains("no enabled resolvers"));
-    }
-
-    #[test]
-    fn normalizes_a_and_cname_answers() {
-        let name = Name::from_ascii("www.example.com.").expect("valid name");
-        let a_record = Record::from_rdata(name.clone(), 300, RData::A(A::new(203, 0, 113, 20)));
-        let cname_record = Record::from_rdata(
-            name,
-            300,
-            RData::CNAME(CNAME(
-                Name::from_ascii("edge.example.net.").expect("valid cname"),
-            )),
-        );
-
-        assert_eq!(
-            normalized_answers(&[a_record], RecordType::A),
-            vec!["203.0.113.20".to_string()]
-        );
-        assert_eq!(
-            normalized_answers(&[cname_record], RecordType::CNAME),
-            vec!["edge.example.net.".to_string()]
-        );
-    }
-
-    #[test]
-    fn builds_query_message_without_recursion() {
-        let name = Name::from_ascii("example.com.").expect("valid name");
-        let message = build_query_message(&name, RecordType::NS);
-
-        assert_eq!(message.queries().len(), 1);
-        assert!(!message.recursion_desired());
-    }
-}
+mod tests;

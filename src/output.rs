@@ -42,13 +42,14 @@ pub fn print_check_table(report: &CheckReport) {
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
     table.set_header([
-        "Resolver", "Address", "Provider", "Region", "Status", "RTT ms", "TTL", "Answers",
+        "Resolver", "Address", "Provider", "Region", "Status", "RTT ms", "TTL", "Answers", "Error",
     ]);
 
     for result in &report.results {
         let status = match result.status {
             QueryStatus::Success => "ok",
             QueryStatus::NoRecords => "empty",
+            QueryStatus::NxDomain => "nxdomain",
             QueryStatus::Error => "error",
         };
         let ttl = result
@@ -72,6 +73,7 @@ pub fn print_check_table(report: &CheckReport) {
             Cell::new(duration),
             Cell::new(ttl),
             Cell::new(result.answers.join(", ")),
+            Cell::new(result.error.as_deref().unwrap_or("-")),
         ]);
     }
 
@@ -88,7 +90,9 @@ pub fn print_parent_trace_table(report: &ParentTraceReport) {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_header(["Server", "Address", "Status", "RTT ms", "NS", "Glue"]);
+    table.set_header([
+        "Server", "Address", "Status", "RTT ms", "NS", "Glue", "Error",
+    ]);
 
     for result in &report.results {
         let duration = result
@@ -118,6 +122,7 @@ pub fn print_parent_trace_table(report: &ParentTraceReport) {
             Cell::new(duration),
             Cell::new(ns_values),
             Cell::new(glue_values),
+            Cell::new(result.error.as_deref().unwrap_or("-")),
         ]);
     }
 

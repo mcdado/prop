@@ -154,3 +154,5 @@ tags = ["disabled"]
 - `check` defaults to `A` records.
 - Supported record types in v1: `A`, `AAAA`, `CNAME`, `MX`, `NS`, `TXT`.
 - Queries run over UDP with TCP fallback when a response is truncated.
+- `check` distinguishes successful answers (`success` in JSON), missing records (`no_records`), nonexistent domains (`nxdomain`), and query failures (`error`, including DNS `SERVFAIL` and `REFUSED`). Errors are also shown in table output.
+- `trace-parent` sends non-recursive queries to the root and TLD authorities and reads delegation nameservers from the authority section, with any associated IPv4/IPv6 glue.
