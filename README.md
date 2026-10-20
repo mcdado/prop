@@ -65,6 +65,52 @@ To run directly from the source without installing:
 cargo run -- check example.com
 ```
 
+### Shell completions
+
+Until the next release, install from source to use shell completions.
+
+`prop completions <SHELL>` prints a completion script for `bash`, `zsh`, `fish`, or `powershell`. Completions include subcommands and option names, plus `--record-type` values in Bash, Zsh, and Fish.
+
+#### Bash
+
+Run this in Bash to activate completions for the current session. Add the same line to your Bash startup file (usually `~/.bashrc`) to enable them in future sessions:
+
+```bash
+source <(prop completions bash)
+```
+
+#### Zsh
+
+Add the following to `~/.zshrc`, after any existing completion-system initialization. If your configuration already calls `compinit`, add only the `source` line:
+
+```zsh
+autoload -Uz compinit
+compinit
+source <(prop completions zsh)
+```
+
+Open a new Zsh session, or run these lines in the current one.
+
+#### Fish
+
+Run this in Fish, and add it to `~/.config/fish/config.fish` to enable completions in future sessions:
+
+```fish
+prop completions fish | source
+```
+
+#### PowerShell
+
+Run this in PowerShell 7 or newer, and add the same line to your PowerShell profile (`$PROFILE`) to enable completions in future sessions:
+
+```powershell
+prop completions powershell | Out-String | Invoke-Expression
+```
+
+In PowerShell, complete options before entering the positional domain name, for example `prop check --rec<Tab>`.
+
+These startup commands generate completions from the installed `prop`, so they pick up CLI changes after an upgrade.
+
 ## Usage
 
 ```bash
@@ -74,6 +120,7 @@ prop check example.com --region asia --provider Google
 prop trace-parent example.com
 prop servers --all
 prop config --validate
+prop completions zsh
 ```
 
 `prop --help` lists all commands and their options. Use `prop <command> --help` or `prop help <command>` for a specific command.

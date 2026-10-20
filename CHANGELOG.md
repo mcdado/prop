@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `prop completions <SHELL>` for Bash, Zsh, Fish, and PowerShell, with activation instructions in the README.
+
 ## 0.1.2 - 2026-10-20
 
 ### Security

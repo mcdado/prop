@@ -106,3 +106,69 @@ fn rejects_a_check_when_all_resolvers_are_disabled() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("no resolvers matched"));
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn generates_shell_completions_without_loading_invalid_configuration() {
+    let config = TestConfig::new("this is not valid TOML [");
+    for (shell, registration) in [
+        ("bash", "complete -F _prop"),
+        ("zsh", "#compdef prop"),
+        ("fish", "complete -c prop"),
+        (
+            "powershell",
+            "Register-ArgumentCompleter -Native -CommandName 'prop'",
+        ),
+    ] {
+        let output = config.run(&["completions", shell]);
+        assert!(output.status.success(), "{shell}: {output:?}");
+        assert!(output.stderr.is_empty(), "{shell}: {output:?}");
+        let script = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            script.contains(registration),
+            "{shell}: missing registration"
+        );
+        for command in ["check", "trace-parent", "servers", "config", "completions"] {
+            assert!(script.contains(command), "{shell}: missing {command}");
+        }
+        for option in ["record-type", "region", "provider", "tag", "json", "config"] {
+            assert!(script.contains(option), "{shell}: missing {option}");
+        }
+        // The standard PowerShell generator completes names, not argument values.
+        if shell != "powershell" {
+            for value in ["aaaa", "cname", "mx", "ns", "txt"] {
+                assert!(
+                    script.contains(value),
+                    "{shell}: missing record type {value}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn generates_completions_without_an_existing_configuration_file() {
+    let config = TestConfig::new("");
+    fs::remove_file(&config.path).unwrap();
+    for shell in ["bash", "zsh", "fish", "powershell"] {
+        let output = config.run(&["completions", shell]);
+        assert!(output.status.success(), "{shell}: {output:?}");
+        assert!(!output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn requires_a_supported_shell_for_completions() {
+    let config = TestConfig::new("");
+    for args in [
+        vec!["completions"],
+        vec!["completions", "unknown"],
+        vec!["completions", "elvish"],
+    ] {
+        let output = config.run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("<SHELL>"));
+    }
+}

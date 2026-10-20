@@ -52,6 +52,47 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+      - name: Verify Bash completion activation
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          source <(target/debug/prop completions bash)
+          COMP_WORDS=(prop check example.com --record-type t)
+          COMP_CWORD=4
+          _prop prop t --record-type
+          [[ "${COMPREPLY[*]}" == txt ]]
+      - name: Verify Zsh completion activation
+        if: runner.os == 'macOS'
+        shell: zsh -f {0}
+        run: |
+          autoload -Uz compinit
+          compinit -D
+          source <(target/debug/prop completions zsh)
+          [[ ${_comps[prop]} == _prop ]]
+      - name: Verify Fish completion activation
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fish
+          export PATH="$PWD/target/debug:$PATH"
+          prop completions fish > "$RUNNER_TEMP/prop.fish"
+          fish --no-config -c 'source "$argv[1]"; complete -C "prop check example.com --record-type t" | string match --quiet "txt*"' "$RUNNER_TEMP/prop.fish"
+      - name: Verify PowerShell completion activation
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "$PWD\target\debug;$env:PATH"
+          prop completions powershell | Out-String | Invoke-Expression
+          foreach ($case in @(
+            @{ Input = 'prop ch'; Expected = 'check' },
+            @{ Input = 'prop check --rec'; Expected = '--record-type' }
+          )) {
+            $completionTexts = [System.Management.Automation.CommandCompletion]::CompleteInput(
+              $case.Input, $case.Input.Length, $null
+            ).CompletionMatches.CompletionText
+            if ($case.Expected -notin $completionTexts) { throw "Missing completion: $($case.Expected)" }
+          }
       - name: Repeat DNS error-response regression on Windows
         if: runner.os == 'Windows'
         shell: pwsh

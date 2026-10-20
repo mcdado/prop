@@ -9,11 +9,11 @@ use hickory_proto::rr::RecordType;
     version,
     about = "DNS propagation CLI",
     flatten_help = true,
-    after_help = "Examples:\n  prop check example.com\n  prop check example.com --record-type txt --json\n  prop check example.com --region asia --provider Google\n  prop trace-parent example.com\n  prop servers --all\n  prop config --validate"
+    after_help = "Examples:\n  prop check example.com\n  prop check example.com --record-type txt --json\n  prop check example.com --region asia --provider Google\n  prop trace-parent example.com\n  prop servers --all\n  prop config --validate\n  prop completions zsh"
 )]
 pub struct Cli {
     /// Path to a custom TOML configuration file
-    #[arg(long, global = true)]
+    #[arg(long, global = true, value_hint = clap::ValueHint::FilePath)]
     pub config: Option<PathBuf>,
     #[command(subcommand)]
     pub command: Commands,
@@ -29,6 +29,34 @@ pub enum Commands {
     Servers(ServersArgs),
     /// Show the configuration path and optionally validate the configuration
     Config(ConfigArgs),
+    /// Print a shell completion script to stdout
+    Completions(CompletionsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
+    pub shell: CompletionShell,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
+}
+
+impl From<CompletionShell> for clap_complete::Shell {
+    fn from(value: CompletionShell) -> Self {
+        match value {
+            CompletionShell::Bash => Self::Bash,
+            CompletionShell::Zsh => Self::Zsh,
+            CompletionShell::Fish => Self::Fish,
+            CompletionShell::Powershell => Self::PowerShell,
+        }
+    }
 }
 
 #[derive(Debug, Args)]

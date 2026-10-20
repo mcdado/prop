@@ -7,7 +7,8 @@ mod output;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Generator;
 use cli::{Cli, Commands};
 use config::{OutputFormat, load_config, merged_resolvers};
 use dns::{run_check, trace_parent};
@@ -20,11 +21,16 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let loaded = load_config(cli.config.as_deref()).context("failed to load config")?;
-    let resolvers = merged_resolvers(&loaded.config).context("failed to build resolver catalog")?;
+    let load = || -> Result<_> {
+        let loaded = load_config(cli.config.as_deref()).context("failed to load config")?;
+        let resolvers =
+            merged_resolvers(&loaded.config).context("failed to build resolver catalog")?;
+        Ok((loaded, resolvers))
+    };
 
     match cli.command {
         Commands::Check(args) => {
+            let (loaded, resolvers) = load()?;
             let filtered = filter_resolvers(
                 resolvers,
                 args.region.as_deref(),
@@ -49,6 +55,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::TraceParent(args) => {
+            let (loaded, _) = load()?;
             let report = trace_parent(&args.name, &loaded.config.settings).await?;
             if args.json || loaded.config.settings.output == OutputFormat::Json {
                 print_json(&report)?;
@@ -57,6 +64,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Servers(args) => {
+            let (loaded, resolvers) = load()?;
             if args.json || loaded.config.settings.output == OutputFormat::Json {
                 let visible = if args.all {
                     resolvers
@@ -72,10 +80,19 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Config(args) => {
+            let (loaded, _) = load()?;
             println!("config_path={}", display_path(&loaded.path));
             if args.validate {
                 println!("config_valid=true");
             }
+        }
+        Commands::Completions(args) => {
+            let mut command = Cli::command().bin_name("prop");
+            command.build();
+            let shell = clap_complete::Shell::from(args.shell);
+            shell
+                .try_generate(&command, &mut std::io::stdout().lock())
+                .context("failed to write shell completions")?;
         }
     }
 
