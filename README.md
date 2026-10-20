@@ -6,9 +6,23 @@
 
 ### Prebuilt releases
 
-Download the archive for your platform from [GitHub Releases](https://github.com/mcdado/prop/releases), verify its SHA-256 checksum, extract it, and put `prop` (or `prop.exe` on Windows) in a directory on your `PATH`.
+Install prop 0.1.1 using the installer for your system.
 
-Release builds cover macOS Apple Silicon and Intel, Linux ARM64 and x86-64 (GNU), Linux x86-64 (musl), and Windows x86-64. Each release also includes shell and PowerShell installers. Draft releases and their assets are visible only to repository collaborators until published.
+#### macOS and Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mcdado/prop/releases/download/v0.1.1/prop-installer.sh | sh
+```
+
+#### Windows (PowerShell)
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/mcdado/prop/releases/download/v0.1.1/prop-installer.ps1 | iex"
+```
+
+For manual installation, download the archive for your platform from [GitHub Releases](https://github.com/mcdado/prop/releases), verify its SHA-256 checksum, extract it, and put `prop` (or `prop.exe` on Windows) in a directory on your `PATH`.
+
+Release builds cover macOS Apple Silicon and Intel, Linux ARM64 and x86-64 (GNU), Linux x86-64 (musl), and Windows x86-64.
 
 ### Build from source
 
