@@ -61,7 +61,10 @@ async fn run(cli: Cli) -> Result<()> {
                 let visible = if args.all {
                     resolvers
                 } else {
-                    resolvers.into_iter().filter(|resolver| resolver.enabled).collect()
+                    resolvers
+                        .into_iter()
+                        .filter(|resolver| resolver.enabled)
+                        .collect()
                 };
                 print_json(&visible)?;
             } else {
@@ -102,8 +105,13 @@ fn filter_resolvers(
                 .unwrap_or(true)
         })
         .filter(|resolver| {
-            tag.map(|value| resolver.tags.iter().any(|tag| tag.eq_ignore_ascii_case(value)))
-                .unwrap_or(true)
+            tag.map(|value| {
+                resolver
+                    .tags
+                    .iter()
+                    .any(|tag| tag.eq_ignore_ascii_case(value))
+            })
+            .unwrap_or(true)
         })
         .collect()
 }

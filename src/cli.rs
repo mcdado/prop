@@ -4,8 +4,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use hickory_proto::rr::RecordType;
 
 #[derive(Debug, Parser)]
-#[command(name = "prop", version, about = "DNS propagation CLI")]
+#[command(
+    name = "prop",
+    version,
+    about = "DNS propagation CLI",
+    flatten_help = true,
+    after_help = "Examples:\n  prop check example.com\n  prop check example.com --record-type txt --json\n  prop check example.com --region asia --provider Google\n  prop trace-parent example.com\n  prop servers --all\n  prop config --validate"
+)]
 pub struct Cli {
+    /// Path to a custom TOML configuration file
     #[arg(long, global = true)]
     pub config: Option<PathBuf>,
     #[command(subcommand)]
@@ -14,44 +21,59 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Check DNS propagation across public resolvers
     Check(CheckArgs),
+    /// Query the parent TLD nameservers for a domain's delegation
     TraceParent(TraceParentArgs),
+    /// List configured DNS resolvers
     Servers(ServersArgs),
+    /// Show the configuration path and optionally validate the configuration
     Config(ConfigArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct CheckArgs {
+    /// Domain name to query
     pub name: String,
+    /// DNS record type to query
     #[arg(long, value_enum, default_value_t = RecordTypeArg::A)]
     pub record_type: RecordTypeArg,
+    /// Print the report as JSON
     #[arg(long)]
     pub json: bool,
+    /// Only query resolvers in this region (case-insensitive)
     #[arg(long)]
     pub region: Option<String>,
+    /// Only query resolvers from this provider (case-insensitive)
     #[arg(long)]
     pub provider: Option<String>,
+    /// Only query resolvers with this tag (case-insensitive)
     #[arg(long)]
     pub tag: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct TraceParentArgs {
+    /// Domain name whose parent delegation should be queried
     pub name: String,
+    /// Print the parent trace as JSON
     #[arg(long)]
     pub json: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct ServersArgs {
+    /// Print the resolver list as JSON
     #[arg(long)]
     pub json: bool,
+    /// Include disabled resolvers
     #[arg(long)]
     pub all: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct ConfigArgs {
+    /// Validate the configuration and resolver catalog
     #[arg(long)]
     pub validate: bool,
 }

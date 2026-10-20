@@ -93,7 +93,9 @@ pub fn default_config_path() -> PathBuf {
 }
 
 pub fn load_config(path: Option<&Path>) -> Result<LoadedConfig> {
-    let resolved_path = path.map(Path::to_path_buf).unwrap_or_else(default_config_path);
+    let resolved_path = path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_config_path);
 
     if !resolved_path.exists() {
         return Ok(LoadedConfig {
@@ -146,7 +148,10 @@ pub fn merged_resolvers(config: &AppConfig) -> Result<Vec<ResolverConfig>> {
 
     for override_config in &config.overrides {
         let Some(resolver) = merged.get_mut(&override_config.id) else {
-            bail!("override references unknown resolver id: {}", override_config.id);
+            bail!(
+                "override references unknown resolver id: {}",
+                override_config.id
+            );
         };
 
         if let Some(name) = &override_config.name {

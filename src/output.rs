@@ -14,7 +14,9 @@ pub fn print_servers_table(resolvers: &[ResolverConfig], include_disabled: bool)
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_header(["ID", "Name", "Address", "Provider", "Region", "Enabled", "Tags"]);
+    table.set_header([
+        "ID", "Name", "Address", "Provider", "Region", "Enabled", "Tags",
+    ]);
 
     for resolver in resolvers {
         if !include_disabled && !resolver.enabled {
@@ -40,14 +42,7 @@ pub fn print_check_table(report: &CheckReport) {
     table.load_preset(UTF8_FULL);
     table.set_content_arrangement(ContentArrangement::Dynamic);
     table.set_header([
-        "Resolver",
-        "Address",
-        "Provider",
-        "Region",
-        "Status",
-        "RTT ms",
-        "TTL",
-        "Answers",
+        "Resolver", "Address", "Provider", "Region", "Status", "RTT ms", "TTL", "Answers",
     ]);
 
     for result in &report.results {
@@ -100,7 +95,11 @@ pub fn print_parent_trace_table(report: &ParentTraceReport) {
             .duration_ms
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string());
-        let status = if result.error.is_some() { "error" } else { "ok" };
+        let status = if result.error.is_some() {
+            "error"
+        } else {
+            "ok"
+        };
         let ns_values = if result.ns_records.is_empty() {
             "-".to_string()
         } else {

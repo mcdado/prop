@@ -8,9 +8,9 @@ use futures::{StreamExt, stream};
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::udp::UdpClientStream;
 use hickory_proto::iocompat::AsyncIoTokioAsStd;
+use hickory_proto::op::Message;
 #[cfg(test)]
 use hickory_proto::op::{MessageType, OpCode, Query};
-use hickory_proto::op::Message;
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use serde::Serialize;
 use tokio::time::timeout;
@@ -216,7 +216,11 @@ async fn query_with_timeout(
         .map_err(|_| anyhow!("query timed out after {}ms", settings.timeout_ms))?
 }
 
-async fn query_dns_server(server: IpAddr, name: Name, record_type: RecordType) -> Result<(Message, u128)> {
+async fn query_dns_server(
+    server: IpAddr,
+    name: Name,
+    record_type: RecordType,
+) -> Result<(Message, u128)> {
     let addr = SocketAddr::new(server, DNS_PORT);
     let stream = UdpClientStream::<tokio::net::UdpSocket>::new(addr);
     let (mut client, background) = AsyncClient::connect(stream)
@@ -238,7 +242,11 @@ async fn query_dns_server(server: IpAddr, name: Name, record_type: RecordType) -
     Ok((response, start.elapsed().as_millis()))
 }
 
-async fn query_dns_server_tcp(server: IpAddr, name: Name, record_type: RecordType) -> Result<Message> {
+async fn query_dns_server_tcp(
+    server: IpAddr,
+    name: Name,
+    record_type: RecordType,
+) -> Result<Message> {
     let addr = SocketAddr::new(server, DNS_PORT);
     let (stream, sender) =
         hickory_client::tcp::TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
@@ -427,7 +435,9 @@ mod tests {
         let cname_record = Record::from_rdata(
             name,
             300,
-            RData::CNAME(CNAME(Name::from_ascii("edge.example.net.").expect("valid cname"))),
+            RData::CNAME(CNAME(
+                Name::from_ascii("edge.example.net.").expect("valid cname"),
+            )),
         );
 
         assert_eq!(
