@@ -5,12 +5,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures::{StreamExt, stream};
-use hickory_client::client::AsyncClient;
-use hickory_client::udp::UdpClientStream;
-use hickory_proto::iocompat::AsyncIoTokioAsStd;
-use hickory_proto::op::{Message, Query, ResponseCode};
+use hickory_net::NetError;
+use hickory_net::client::Client;
+use hickory_net::runtime::TokioRuntimeProvider;
+use hickory_net::tcp::TcpClientStream;
+use hickory_net::udp::UdpClientStream;
+use hickory_net::xfer::{DnsHandle, FirstAnswer};
+use hickory_proto::op::{DnsRequestOptions, Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
-use hickory_proto::xfer::{DnsHandle, DnsRequestOptions, FirstAnswer};
 use serde::Serialize;
 use tokio::time::timeout;
 
@@ -218,16 +220,16 @@ fn resolver_report(
 ) -> QueryReport {
     match response {
         Ok((message, duration_ms)) => {
-            let nonexistent = message.response_code() == ResponseCode::NXDomain;
+            let nonexistent = message.response_code == ResponseCode::NXDomain;
             let answers = if nonexistent {
                 vec![]
             } else {
-                normalized_answers(message.answers(), record_type)
+                normalized_answers(&message.answers, record_type)
             };
             let ttl = if nonexistent {
                 None
             } else {
-                message.answers().iter().map(Record::ttl).min()
+                message.answers.iter().map(|record| record.ttl).min()
             };
             let status = if nonexistent {
                 QueryStatus::NxDomain
@@ -265,12 +267,19 @@ async fn query_endpoint_with_timeout(
     settings: &SettingsConfig,
 ) -> Result<(Message, u128)> {
     let deadline = Duration::from_millis(settings.timeout_ms);
-    timeout(
+    match timeout(
         deadline,
-        query_dns_server(addr, name, record_type, recursion_desired),
+        query_dns_server(addr, name, record_type, recursion_desired, deadline),
     )
     .await
-    .map_err(|_| anyhow!("query timed out after {}ms", settings.timeout_ms))?
+    {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) if !matches!(error.downcast_ref::<NetError>(), Some(NetError::Timeout)) => {
+            Err(error)
+        }
+        // The transport's timer can expire before the outer total-query timer.
+        _ => bail!("query timed out after {}ms", settings.timeout_ms),
+    }
 }
 
 async fn query_dns_server(
@@ -278,11 +287,12 @@ async fn query_dns_server(
     name: Name,
     record_type: RecordType,
     recursion_desired: bool,
+    deadline: Duration,
 ) -> Result<(Message, u128)> {
-    let stream = UdpClientStream::<tokio::net::UdpSocket>::new(addr);
-    let (client, background) = AsyncClient::connect(stream)
-        .await
-        .with_context(|| format!("failed to connect to {addr}"))?;
+    let stream = UdpClientStream::builder(addr, TokioRuntimeProvider::new())
+        .with_timeout(Some(deadline))
+        .build();
+    let (client, background) = Client::from_sender(stream);
     tokio::spawn(background);
 
     let start = Instant::now();
@@ -290,15 +300,16 @@ async fn query_dns_server(
         .await
         .with_context(|| format!("query to {addr} failed"))?;
 
-    if response.truncated() {
-        response = query_dns_server_tcp(addr, name, record_type, recursion_desired).await?;
+    if response.truncation {
+        response =
+            query_dns_server_tcp(addr, name, record_type, recursion_desired, deadline).await?;
     }
 
     if !matches!(
-        response.response_code(),
+        response.response_code,
         ResponseCode::NoError | ResponseCode::NXDomain
     ) {
-        bail!("DNS server {addr} returned {}", response.response_code());
+        bail!("DNS server {addr} returned {}", response.response_code);
     }
 
     Ok((response, start.elapsed().as_millis()))
@@ -309,13 +320,15 @@ async fn query_dns_server_tcp(
     name: Name,
     record_type: RecordType,
     recursion_desired: bool,
+    deadline: Duration,
 ) -> Result<Message> {
     let (stream, sender) =
-        hickory_client::tcp::TcpClientStream::<AsyncIoTokioAsStd<tokio::net::TcpStream>>::new(addr);
-    let client = AsyncClient::new(stream, sender, None);
-    let (client, background) = client
+        TcpClientStream::new(addr, None, Some(deadline), TokioRuntimeProvider::new());
+    let stream = stream
         .await
         .with_context(|| format!("failed to connect over TCP to {addr}"))?;
+    let (client, background) =
+        Client::<TokioRuntimeProvider>::with_timeout(stream, sender, deadline);
     tokio::spawn(background);
 
     send_query(&client, name, record_type, recursion_desired)
@@ -324,7 +337,7 @@ async fn query_dns_server_tcp(
 }
 
 async fn send_query(
-    client: &AsyncClient,
+    client: &Client<TokioRuntimeProvider>,
     name: Name,
     record_type: RecordType,
     recursion_desired: bool,
@@ -355,11 +368,8 @@ async fn query_first_success(
         .await
         {
             Ok((response, _)) => {
-                if response.response_code() != ResponseCode::NoError {
-                    bail!(
-                        "root server returned {} for {name}",
-                        response.response_code()
-                    );
+                if response.response_code != ResponseCode::NoError {
+                    bail!("root server returned {} for {name}", response.response_code);
                 }
                 return Ok(response);
             }
@@ -374,25 +384,23 @@ fn extract_tld_servers(message: &Message) -> Result<Vec<RootServer>> {
     let mut ns_names = vec![];
     let mut addresses = BTreeMap::new();
 
-    for record in message.name_servers() {
-        if let Some(RData::NS(ns)) = record.data() {
+    for record in &message.authorities {
+        if let RData::NS(ns) = &record.data {
             ns_names.push(ns.to_utf8());
         }
     }
 
-    for record in message.additionals() {
-        if let Some(data) = record.data() {
-            match data {
-                RData::A(ipv4) => {
-                    addresses.insert(record.name().to_utf8(), IpAddr::V4((*ipv4).into()));
-                }
-                RData::AAAA(ipv6) => {
-                    addresses
-                        .entry(record.name().to_utf8())
-                        .or_insert(IpAddr::V6((*ipv6).into()));
-                }
-                _ => {}
+    for record in &message.additionals {
+        match &record.data {
+            RData::A(ipv4) => {
+                addresses.insert(record.name.to_utf8(), IpAddr::V4((*ipv4).into()));
             }
+            RData::AAAA(ipv6) => {
+                addresses
+                    .entry(record.name.to_utf8())
+                    .or_insert(IpAddr::V6((*ipv6).into()));
+            }
+            _ => {}
         }
     }
 
@@ -441,14 +449,14 @@ fn parent_report(server: RootServer, response: Result<(Message, u128)>) -> Paren
     match response {
         Ok((message, duration_ms)) => {
             report.duration_ms = Some(duration_ms);
-            if message.response_code() != ResponseCode::NoError {
-                report.error = Some(format!("DNS response {}", message.response_code()));
+            if message.response_code != ResponseCode::NoError {
+                report.error = Some(format!("DNS response {}", message.response_code));
                 return report;
             }
             let ns_records: Vec<_> = message
-                .name_servers()
+                .authorities
                 .iter()
-                .chain(message.answers())
+                .chain(&message.answers)
                 .filter(|record| record.record_type() == RecordType::NS)
                 .cloned()
                 .collect();
@@ -458,13 +466,13 @@ fn parent_report(server: RootServer, response: Result<(Message, u128)>) -> Paren
                 return report;
             }
             let glue: Vec<_> = message
-                .additionals()
+                .additionals
                 .iter()
                 .filter(|record| {
                     report
                         .ns_records
                         .iter()
-                        .any(|name| name.eq_ignore_ascii_case(&record.name().to_utf8()))
+                        .any(|name| name.eq_ignore_ascii_case(&record.name.to_utf8()))
                 })
                 .cloned()
                 .collect();
@@ -536,9 +544,7 @@ fn normalized_answers(records: &[Record], record_type: RecordType) -> Vec<String
     let mut answers = BTreeSet::new();
 
     for record in records {
-        let Some(data) = record.data() else {
-            continue;
-        };
+        let data = &record.data;
 
         let normalized = match (record_type, data) {
             (RecordType::A, RData::A(ipv4)) => Some(ipv4.to_string()),
@@ -547,12 +553,12 @@ fn normalized_answers(records: &[Record], record_type: RecordType) -> Vec<String
             (RecordType::NS, RData::NS(name)) => Some(name.to_lowercase().to_utf8()),
             (RecordType::MX, RData::MX(mx)) => Some(format!(
                 "{} {}",
-                mx.preference(),
-                mx.exchange().to_lowercase().to_utf8()
+                mx.preference,
+                mx.exchange.to_lowercase().to_utf8()
             )),
             (RecordType::TXT, RData::TXT(txt)) => {
                 let bytes: Vec<u8> = txt
-                    .txt_data()
+                    .txt_data
                     .iter()
                     .flat_map(|chunk| chunk.iter().copied())
                     .collect();

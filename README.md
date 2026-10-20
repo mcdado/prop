@@ -26,7 +26,7 @@ Release builds cover macOS Apple Silicon and Intel, Linux ARM64 and x86-64 (GNU)
 
 ### Build from source
 
-Install Rust and Cargo with a toolchain that supports Rust edition 2024, then run this command from the project directory:
+Install Rust 1.88 or newer and Cargo, then run this command from the project directory:
 
 ```bash
 cargo install --path . --locked

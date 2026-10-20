@@ -1,5 +1,5 @@
 use super::*;
-use hickory_proto::op::MessageType;
+use hickory_proto::op::OpCode;
 use hickory_proto::rr::Name;
 use hickory_proto::rr::rdata::{A, CNAME};
 use hickory_proto::rr::rdata::{AAAA, NS};
@@ -207,11 +207,9 @@ fn test_settings() -> SettingsConfig {
 }
 
 fn response_to(query: &Message, mut response: Message) -> Message {
-    response
-        .set_id(query.id())
-        .set_message_type(MessageType::Response)
-        .set_recursion_desired(query.recursion_desired());
-    response.add_queries(query.queries().iter().cloned());
+    response.metadata.id = query.id;
+    response.metadata.recursion_desired = query.recursion_desired;
+    response.add_queries(query.queries.iter().cloned());
     response
 }
 
@@ -238,7 +236,7 @@ async fn serve_udp(response: Message) -> (SocketAddr, tokio::task::JoinHandle<Me
 #[tokio::test]
 async fn sends_the_requested_recursion_flag_on_the_wire() {
     for recursive in [false, true] {
-        let (addr, server) = serve_udp(Message::new()).await;
+        let (addr, server) = serve_udp(Message::response(0, OpCode::Query)).await;
         query_endpoint_with_timeout(
             addr,
             Name::from_ascii("example.com.").unwrap(),
@@ -249,13 +247,15 @@ async fn sends_the_requested_recursion_flag_on_the_wire() {
         .await
         .unwrap();
         let query = server.await.unwrap();
-        assert_eq!(query.recursion_desired(), recursive);
-        assert_eq!(query.queries().len(), 1);
+        assert_eq!(query.recursion_desired, recursive);
+        assert_eq!(query.queries.len(), 1);
         assert_eq!(
-            query.queries()[0].name(),
+            query.queries[0].name(),
             &Name::from_ascii("example.com.").unwrap()
         );
-        assert_eq!(query.queries()[0].query_type(), RecordType::NS);
+        assert_eq!(query.queries[0].query_type(), RecordType::NS);
+        assert_eq!(query.queries[0].query_class(), DNSClass::IN);
+        assert!(query.edns.is_some());
     }
 }
 
@@ -263,8 +263,8 @@ async fn sends_the_requested_recursion_flag_on_the_wire() {
 async fn reads_parent_delegation_and_only_its_glue_from_a_referral() {
     let name = Name::from_ascii("example.com.").unwrap();
     let ns = Name::from_ascii("ns.example.net.").unwrap();
-    let mut response = Message::new();
-    response.add_name_server(Record::from_rdata(
+    let mut response = Message::response(0, OpCode::Query);
+    response.authorities.push(Record::from_rdata(
         name.clone(),
         300,
         RData::NS(NS(ns.clone())),
@@ -294,7 +294,7 @@ async fn reads_parent_delegation_and_only_its_glue_from_a_referral() {
         },
         response,
     );
-    assert!(!server.await.unwrap().recursion_desired());
+    assert!(!server.await.unwrap().recursion_desired);
     assert_eq!(report.ns_records, vec!["ns.example.net."]);
     assert_eq!(report.glue_records, vec!["192.0.2.1", "2001:db8::1"]);
     assert!(report.error.is_none());
@@ -303,8 +303,8 @@ async fn reads_parent_delegation_and_only_its_glue_from_a_referral() {
 #[test]
 fn accepts_answer_ns_records_and_rejects_empty_or_negative_parent_responses() {
     for code in [ResponseCode::NoError, ResponseCode::NXDomain] {
-        let mut message = Message::new();
-        message.set_response_code(code);
+        let mut message = Message::response(0, OpCode::Query);
+        message.metadata.response_code = code;
         let report = parent_report(
             RootServer {
                 name: "mock".into(),
@@ -315,7 +315,7 @@ fn accepts_answer_ns_records_and_rejects_empty_or_negative_parent_responses() {
         assert!(report.error.is_some());
         assert!(report.ns_records.is_empty());
     }
-    let mut message = Message::new();
+    let mut message = Message::response(0, OpCode::Query);
     message.add_answer(Record::from_rdata(
         Name::from_ascii("example.com.").unwrap(),
         300,
@@ -340,8 +340,8 @@ async fn distinguishes_nodata_nxdomain_and_dns_failures() {
         (ResponseCode::ServFail, QueryStatus::Error),
         (ResponseCode::Refused, QueryStatus::Error),
     ] {
-        let mut message = Message::new();
-        message.set_response_code(code);
+        let mut message = Message::response(0, OpCode::Query);
+        message.metadata.response_code = code;
         let (addr, server) = serve_udp(message).await;
         let response = query_endpoint_with_timeout(
             addr,
@@ -386,8 +386,8 @@ async fn uses_tcp_after_udp_truncation_with_the_same_query_options() {
                 .expect("mock DNS server did not receive the initial UDP query")
                 .expect("mock DNS server failed to receive the initial UDP query");
             let udp_query = Message::from_vec(&buffer[..len]).unwrap();
-            let mut truncated = Message::new();
-            truncated.set_truncated(true);
+            let mut truncated = Message::response(0, OpCode::Query);
+            truncated.metadata.truncation = true;
             udp.send_to(&response_to(&udp_query, truncated).to_vec().unwrap(), peer)
                 .await
                 .unwrap();
@@ -404,11 +404,11 @@ async fn uses_tcp_after_udp_truncation_with_the_same_query_options() {
             })
             .await
             .expect("mock DNS server did not receive a complete TCP query");
-            let mut message = Message::new();
-            message.set_response_code(code);
+            let mut message = Message::response(0, OpCode::Query);
+            message.metadata.response_code = code;
             if code == ResponseCode::NoError {
                 message.add_answer(Record::from_rdata(
-                    tcp_query.queries()[0].name().clone(),
+                    tcp_query.queries[0].name().clone(),
                     300,
                     RData::A(A::new(192, 0, 2, 10)),
                 ));
@@ -427,9 +427,11 @@ async fn uses_tcp_after_udp_truncation_with_the_same_query_options() {
         )
         .await;
         let (udp_query, tcp_query) = server.await.unwrap();
-        assert_eq!(udp_query.recursion_desired(), recursive);
-        assert_eq!(tcp_query.recursion_desired(), recursive);
-        assert_eq!(udp_query.queries(), tcp_query.queries());
+        assert_eq!(udp_query.recursion_desired, recursive);
+        assert_eq!(tcp_query.recursion_desired, recursive);
+        assert_eq!(udp_query.queries, tcp_query.queries);
+        assert!(udp_query.edns.is_some());
+        assert_eq!(udp_query.edns, tcp_query.edns);
         if code == ResponseCode::NoError {
             let report = resolver_report(&test_resolver(), RecordType::A, response);
             assert_eq!(report.status, QueryStatus::Success);
@@ -469,8 +471,8 @@ async fn times_out_a_silent_dns_server() {
 #[test]
 fn discovers_tld_authorities_from_root_referral_glue() {
     let ns = Name::from_ascii("a.gtld-servers.net.").unwrap();
-    let mut message = Message::new();
-    message.add_name_server(Record::from_rdata(
+    let mut message = Message::response(0, OpCode::Query);
+    message.authorities.push(Record::from_rdata(
         Name::from_ascii("com.").unwrap(),
         300,
         RData::NS(NS(ns.clone())),
@@ -480,7 +482,7 @@ fn discovers_tld_authorities_from_root_referral_glue() {
     assert_eq!(servers.len(), 1);
     assert_eq!(servers[0].name, "a.gtld-servers.net.");
     assert_eq!(servers[0].address, "192.0.2.1".parse::<IpAddr>().unwrap());
-    assert!(extract_tld_servers(&Message::new()).is_err());
+    assert!(extract_tld_servers(&Message::response(0, OpCode::Query)).is_err());
 }
 
 #[tokio::test]
