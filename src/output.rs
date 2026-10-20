@@ -3,7 +3,7 @@ use comfy_table::{Cell, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::Serialize;
 
 use crate::config::ResolverConfig;
-use crate::dns::{CheckReport, ParentTraceReport, QueryStatus};
+use crate::dns::{CheckReport, ConsensusStatus, ParentTraceReport, QueryStatus};
 
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
@@ -77,11 +77,31 @@ pub fn print_check_table(report: &CheckReport) {
         ]);
     }
 
+    let consensus_status = match report.consensus.status {
+        ConsensusStatus::Unanimous => "unanimous",
+        ConsensusStatus::Majority => "majority",
+        ConsensusStatus::NoMajority => "no majority",
+        ConsensusStatus::NoResponses => "no valid responses",
+    };
+    let response_status = match report.consensus.consensus_response_status {
+        Some(QueryStatus::Success) => "records found",
+        Some(QueryStatus::NoRecords) => "no records",
+        Some(QueryStatus::NxDomain) => "NXDOMAIN",
+        _ => "no agreed response",
+    };
     println!(
-        "Query: {} {} | Consensus answers: {}",
+        "Query: {} {} | Consensus: {} ({}/{} valid responses; {}) | Consensus answers: {}",
         report.name,
         report.record_type,
-        report.consensus.join(", ")
+        consensus_status,
+        report.consensus.agreeing_resolvers,
+        report.consensus.responding_resolvers,
+        response_status,
+        if report.consensus.answers.is_empty() {
+            "-".into()
+        } else {
+            report.consensus.answers.join(", ")
+        }
     );
     println!("{table}");
 }

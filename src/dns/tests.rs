@@ -6,6 +6,183 @@ use hickory_proto::rr::rdata::{AAAA, NS};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 
+fn report_with_answers(status: QueryStatus, answers: &[&str]) -> QueryReport {
+    QueryReport {
+        resolver: test_resolver(),
+        status,
+        duration_ms: Some(1),
+        ttl: Some(300),
+        answers: answers.iter().map(|value| (*value).into()).collect(),
+        error: if status == QueryStatus::Error {
+            Some("timeout".into())
+        } else {
+            None
+        },
+    }
+}
+
+#[test]
+fn consensus_never_combines_different_answer_sets() {
+    let results = vec![
+        report_with_answers(QueryStatus::Success, &["192.0.2.1", "192.0.2.2"]),
+        report_with_answers(QueryStatus::Success, &["192.0.2.1", "192.0.2.3"]),
+        report_with_answers(QueryStatus::Success, &["192.0.2.2", "192.0.2.3"]),
+    ];
+    let consensus = build_consensus(&results);
+    assert_eq!(consensus.status, ConsensusStatus::NoMajority);
+    assert!(consensus.answers.is_empty());
+    assert_eq!(consensus.responding_resolvers, 3);
+    assert!(consensus.consensus_response_status.is_none());
+}
+
+#[test]
+fn consensus_requires_a_strict_majority_including_ties_and_pluralities() {
+    for results in [
+        vec![
+            report_with_answers(QueryStatus::Success, &["192.0.2.1"]),
+            report_with_answers(QueryStatus::Success, &["192.0.2.2"]),
+        ],
+        vec![
+            report_with_answers(QueryStatus::Success, &["192.0.2.1"]),
+            report_with_answers(QueryStatus::Success, &["192.0.2.1"]),
+            report_with_answers(QueryStatus::Success, &["192.0.2.2"]),
+            report_with_answers(QueryStatus::Success, &["192.0.2.3"]),
+        ],
+    ] {
+        let consensus = build_consensus(&results);
+        assert_eq!(consensus.status, ConsensusStatus::NoMajority);
+        assert!(consensus.answers.is_empty());
+        assert_eq!(consensus.agreeing_resolvers, 0);
+    }
+}
+
+#[test]
+fn consensus_counts_complete_sets_ignoring_order_duplicates_and_failures() {
+    let results = vec![
+        report_with_answers(
+            QueryStatus::Success,
+            &["192.0.2.2", "192.0.2.1", "192.0.2.1"],
+        ),
+        report_with_answers(QueryStatus::Success, &["192.0.2.1", "192.0.2.2"]),
+        report_with_answers(QueryStatus::Success, &["192.0.2.3"]),
+        report_with_answers(QueryStatus::Error, &[]),
+    ];
+    let consensus = build_consensus(&results);
+    assert_eq!(consensus.status, ConsensusStatus::Majority);
+    assert_eq!(consensus.answers, vec!["192.0.2.1", "192.0.2.2"]);
+    assert_eq!(consensus.agreeing_resolvers, 2);
+    assert_eq!(consensus.responding_resolvers, 3);
+    assert_eq!(
+        consensus.consensus_response_status,
+        Some(QueryStatus::Success)
+    );
+    let unanimous = build_consensus(&results[..2]);
+    assert_eq!(unanimous.status, ConsensusStatus::Unanimous);
+    assert_eq!(unanimous.agreeing_resolvers, 2);
+}
+
+#[test]
+fn consensus_distinguishes_nodata_nxdomain_and_no_responses() {
+    let negative = report_with_answers(QueryStatus::NxDomain, &[]);
+    let empty = report_with_answers(QueryStatus::NoRecords, &[]);
+    assert_eq!(
+        build_consensus(&[negative.clone(), empty.clone()]).status,
+        ConsensusStatus::NoMajority
+    );
+    for report in [negative, empty] {
+        let expected_status = report.status;
+        let consensus = build_consensus(&[report]);
+        assert_eq!(consensus.status, ConsensusStatus::Unanimous);
+        assert_eq!(consensus.consensus_response_status, Some(expected_status));
+        assert!(consensus.answers.is_empty());
+    }
+    for reports in [vec![], vec![report_with_answers(QueryStatus::Error, &[])]] {
+        let consensus = build_consensus(&reports);
+        assert_eq!(consensus.status, ConsensusStatus::NoResponses);
+        assert_eq!(consensus.responding_resolvers, 0);
+        assert!(consensus.answers.is_empty());
+    }
+}
+
+#[test]
+fn keeps_the_json_consensus_array_and_exposes_agreement_metadata() {
+    let results = vec![report_with_answers(QueryStatus::Success, &["192.0.2.1"])];
+    let report = CheckReport {
+        name: "example.com.".into(),
+        record_type: "A".into(),
+        consensus: build_consensus(&results),
+        results,
+    };
+    let json = serde_json::to_value(report).unwrap();
+    assert_eq!(json["consensus"], serde_json::json!(["192.0.2.1"]));
+    assert_eq!(json["consensus_status"], "unanimous");
+    assert_eq!(json["consensus_response_status"], "success");
+    assert_eq!(json["agreeing_resolvers"], 1);
+    assert_eq!(json["responding_resolvers"], 1);
+}
+
+#[test]
+fn normalizes_txt_chunks_without_inventing_spaces_or_merging_records() {
+    use hickory_proto::rr::rdata::TXT;
+    let name = Name::from_ascii("selector._domainkey.example.com.").unwrap();
+    let split = Record::from_rdata(
+        name.clone(),
+        300,
+        RData::TXT(TXT::new(vec!["v=DKIM1; p=ABC".into(), "DEF".into()])),
+    );
+    let whole = Record::from_rdata(
+        name.clone(),
+        300,
+        RData::TXT(TXT::new(vec!["v=DKIM1; p=ABCDEF".into()])),
+    );
+    assert_eq!(
+        normalized_answers(std::slice::from_ref(&split), RecordType::TXT),
+        normalized_answers(&[whole], RecordType::TXT)
+    );
+    let other = Record::from_rdata(
+        name.clone(),
+        300,
+        RData::TXT(TXT::new(vec!["another record".into()])),
+    );
+    assert_eq!(
+        normalized_answers(&[split, other], RecordType::TXT),
+        vec!["another record", "v=DKIM1; p=ABCDEF"]
+    );
+    let utf8 = Record::from_rdata(
+        name,
+        300,
+        RData::TXT(TXT::from_bytes(vec![b"\xc3", b"\xa8"])),
+    );
+    assert_eq!(normalized_answers(&[utf8], RecordType::TXT), vec!["è"]);
+}
+
+#[test]
+fn normalizes_hostname_case_in_cname_ns_and_mx_answers() {
+    use hickory_proto::rr::rdata::MX;
+    let name = Name::from_ascii("example.com.").unwrap();
+    let mixed = Name::from_ascii("Mail.Example.COM.").unwrap();
+    for (record_type, data, expected) in [
+        (
+            RecordType::CNAME,
+            RData::CNAME(CNAME(mixed.clone())),
+            "mail.example.com.",
+        ),
+        (
+            RecordType::NS,
+            RData::NS(NS(mixed.clone())),
+            "mail.example.com.",
+        ),
+        (
+            RecordType::MX,
+            RData::MX(MX::new(10, mixed)),
+            "10 mail.example.com.",
+        ),
+    ] {
+        let record = Record::from_rdata(name.clone(), 300, data);
+        assert_eq!(normalized_answers(&[record], record_type), vec![expected]);
+    }
+}
+
 fn test_resolver() -> ResolverConfig {
     ResolverConfig {
         id: "mock".into(),
@@ -315,12 +492,13 @@ async fn rejects_invalid_settings_before_querying() {
             ..SettingsConfig::default()
         },
     ] {
-        assert!(
-            run_check("example.com", RecordType::A, vec![], &settings)
-                .await
-                .is_err()
-        );
-        assert!(trace_parent("example.com", &settings).await.is_err());
+        // An invalid name prevents network I/O even if settings validation regresses.
+        let error = run_check("..", RecordType::A, vec![test_resolver()], &settings)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("settings."));
+        let error = trace_parent("..", &settings).await.unwrap_err();
+        assert!(error.to_string().contains("settings."));
     }
 }
 

@@ -37,8 +37,29 @@ const ROOT_SERVERS: [(&str, &str); 13] = [
 pub struct CheckReport {
     pub name: String,
     pub record_type: String,
-    pub consensus: Vec<String>,
+    #[serde(flatten)]
+    pub consensus: ConsensusReport,
     pub results: Vec<QueryReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ConsensusReport {
+    #[serde(rename = "consensus")]
+    pub answers: Vec<String>,
+    #[serde(rename = "consensus_status")]
+    pub status: ConsensusStatus,
+    pub consensus_response_status: Option<QueryStatus>,
+    pub agreeing_resolvers: usize,
+    pub responding_resolvers: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsensusStatus {
+    Unanimous,
+    Majority,
+    NoMajority,
+    NoResponses,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,7 +72,7 @@ pub struct QueryReport {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryStatus {
     Success,
@@ -466,20 +487,49 @@ fn ensure_fqdn(name: &str) -> Result<Name> {
     Name::from_ascii(fqdn).context("invalid domain name")
 }
 
-fn build_consensus(results: &[QueryReport]) -> Vec<String> {
-    let mut counts = BTreeMap::<String, usize>::new();
-
-    for result in results {
-        for answer in &result.answers {
-            *counts.entry(answer.clone()).or_default() += 1;
-        }
+fn build_consensus(results: &[QueryReport]) -> ConsensusReport {
+    let mut counts = BTreeMap::<(QueryStatus, Vec<String>), usize>::new();
+    let mut responding_resolvers = 0;
+    for result in results
+        .iter()
+        .filter(|result| result.status != QueryStatus::Error)
+    {
+        let mut answers = result.answers.clone();
+        answers.sort();
+        answers.dedup();
+        *counts.entry((result.status, answers)).or_default() += 1;
+        responding_resolvers += 1;
     }
 
-    let max = counts.values().copied().max().unwrap_or_default();
-    counts
+    // Vote on complete responses, keeping NXDOMAIN distinct from an empty NOERROR answer.
+    let winner = counts
         .into_iter()
-        .filter_map(|(answer, count)| (count == max).then_some(answer))
-        .collect()
+        .find(|(_, count)| *count > responding_resolvers / 2);
+    if let Some(((response_status, answers), agreeing_resolvers)) = winner {
+        ConsensusReport {
+            answers,
+            status: if agreeing_resolvers == responding_resolvers {
+                ConsensusStatus::Unanimous
+            } else {
+                ConsensusStatus::Majority
+            },
+            consensus_response_status: Some(response_status),
+            agreeing_resolvers,
+            responding_resolvers,
+        }
+    } else {
+        ConsensusReport {
+            answers: vec![],
+            status: if responding_resolvers == 0 {
+                ConsensusStatus::NoResponses
+            } else {
+                ConsensusStatus::NoMajority
+            },
+            consensus_response_status: None,
+            agreeing_resolvers: 0,
+            responding_resolvers,
+        }
+    }
 }
 
 fn normalized_answers(records: &[Record], record_type: RecordType) -> Vec<String> {
@@ -493,18 +543,21 @@ fn normalized_answers(records: &[Record], record_type: RecordType) -> Vec<String
         let normalized = match (record_type, data) {
             (RecordType::A, RData::A(ipv4)) => Some(ipv4.to_string()),
             (RecordType::AAAA, RData::AAAA(ipv6)) => Some(ipv6.to_string()),
-            (RecordType::CNAME, RData::CNAME(name)) => Some(name.to_utf8()),
-            (RecordType::NS, RData::NS(name)) => Some(name.to_utf8()),
-            (RecordType::MX, RData::MX(mx)) => {
-                Some(format!("{} {}", mx.preference(), mx.exchange().to_utf8()))
-            }
-            (RecordType::TXT, RData::TXT(txt)) => Some(
-                txt.txt_data()
+            (RecordType::CNAME, RData::CNAME(name)) => Some(name.to_lowercase().to_utf8()),
+            (RecordType::NS, RData::NS(name)) => Some(name.to_lowercase().to_utf8()),
+            (RecordType::MX, RData::MX(mx)) => Some(format!(
+                "{} {}",
+                mx.preference(),
+                mx.exchange().to_lowercase().to_utf8()
+            )),
+            (RecordType::TXT, RData::TXT(txt)) => {
+                let bytes: Vec<u8> = txt
+                    .txt_data()
                     .iter()
-                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            ),
+                    .flat_map(|chunk| chunk.iter().copied())
+                    .collect();
+                Some(String::from_utf8_lossy(&bytes).into_owned())
+            }
             _ => None,
         };
 

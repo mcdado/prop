@@ -78,6 +78,12 @@ Check DNS propagation for the required domain name across public resolvers.
 
 Region, provider, and tag filters match complete values without regard to case. When combined, all filters must match. Use `prop servers --json` to inspect resolver metadata and available filter values.
 
+Consensus compares complete normalized answer sets and requires a strict majority of valid DNS responses. Timeouts and DNS errors do not vote; empty responses and `NXDOMAIN` vote separately. A tie or any other result without a strict majority produces no consensus, rather than combining records from different resolvers.
+
+The JSON `consensus` field remains an array of answers. Additional fields explain the result: `consensus_status` (`unanimous`, `majority`, `no_majority`, or `no_responses`), `consensus_response_status`, `agreeing_resolvers`, and `responding_resolvers`. A single valid response can therefore be unanimous even when other resolvers fail; inspect the per-resolver results for those failures.
+
+DNS names in CNAME, NS, and MX answers are compared without regard to case. Chunks within each TXT record are concatenated without adding spaces; separate TXT records remain separate answers.
+
 ### `trace-parent <NAME>`
 
 Query the parent TLD nameservers for the required domain's delegation.
