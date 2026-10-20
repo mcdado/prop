@@ -111,7 +111,7 @@ prop --config ./example-config.toml config --validate
 
 ## Config
 
-Configuration is optional: when the file does not exist, `prop` uses its built-in settings and resolver catalog. Run `prop config` to see the default path on your system.
+The default configuration file is optional: when it does not exist, `prop` uses its built-in settings and resolver catalog. A file explicitly selected with `--config` must exist and be readable. Run `prop config` to see the default path on your system.
 
 The file is stored in the platform configuration directory under `prop/config.toml`. On Linux, this is `$XDG_CONFIG_HOME/prop/config.toml`, or `~/.config/prop/config.toml` when `XDG_CONFIG_HOME` is unset. On macOS, it is `~/Library/Application Support/prop/config.toml`.
 
@@ -122,6 +122,8 @@ prop --config ./example-config.toml check example.com
 ```
 
 `settings.output` accepts `"table"` (the default) or `"json"`. The `--json` option also enables JSON output for `check`, `trace-parent`, and `servers`.
+
+`settings.timeout_ms` and `settings.concurrency` must be greater than zero. A `check` command whose filters match no enabled resolvers exits with an error.
 
 Example:
 

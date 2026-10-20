@@ -1,0 +1,108 @@
+use std::fs;
+use std::path::PathBuf;
+use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_CONFIG: AtomicU64 = AtomicU64::new(0);
+
+struct TestConfig {
+    directory: PathBuf,
+    path: PathBuf,
+}
+
+impl TestConfig {
+    fn new(contents: &str) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "prop-cli-{}-{timestamp}-{}",
+            std::process::id(),
+            NEXT_CONFIG.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).unwrap();
+        let path = directory.join("config.toml");
+        fs::write(&path, contents).unwrap();
+        Self { directory, path }
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_prop"))
+            .arg("--config")
+            .arg(&self.path)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+}
+
+impl Drop for TestConfig {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[test]
+fn rejects_zero_concurrency_and_timeout_during_validation() {
+    for setting in ["concurrency", "timeout_ms"] {
+        let config = TestConfig::new(&format!("[settings]\n{setting} = 0\n"));
+        let output = config.run(&["config", "--validate"]);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains(&format!("settings.{setting}")));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("config_valid=true"));
+    }
+}
+
+#[test]
+fn rejects_a_missing_explicit_configuration_file() {
+    let config = TestConfig::new("");
+    fs::remove_file(&config.path).unwrap();
+    let output = config.run(&["config", "--validate"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("failed to read config file"));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn validates_an_existing_configuration_file() {
+    let config = TestConfig::new("[settings]\nconcurrency = 1\ntimeout_ms = 10\n");
+    let output = config.run(&["config", "--validate"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("config_valid=true"));
+}
+
+#[test]
+fn rejects_a_filter_that_matches_only_disabled_resolvers() {
+    let config = TestConfig::new(
+        "[[overrides]]\nid = 'google-primary'\nenabled = false\ntags = ['disabled-test']\n",
+    );
+    let output = config.run(&["check", "example.com", "--tag", "disabled-test", "--json"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no resolvers matched"));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn rejects_a_check_when_all_resolvers_are_disabled() {
+    let config = TestConfig::new("");
+    let output = config.run(&["servers", "--json"]);
+    assert!(output.status.success());
+    let servers: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!servers.is_empty());
+    let overrides = servers
+        .iter()
+        .map(|server| {
+            format!(
+                "[[overrides]]\nid = {:?}\nenabled = false\n",
+                server["id"].as_str().unwrap()
+            )
+        })
+        .collect::<String>();
+    fs::write(&config.path, overrides).unwrap();
+    let output = config.run(&["check", "example.com", "--json"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no resolvers matched"));
+    assert!(output.stdout.is_empty());
+}

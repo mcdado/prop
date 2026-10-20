@@ -56,6 +56,18 @@ impl Default for SettingsConfig {
     }
 }
 
+impl SettingsConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.concurrency == 0 {
+            bail!("settings.concurrency must be greater than zero");
+        }
+        if self.timeout_ms == 0 {
+            bail!("settings.timeout_ms must be greater than zero");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
@@ -97,15 +109,20 @@ pub fn load_config(path: Option<&Path>) -> Result<LoadedConfig> {
         .map(Path::to_path_buf)
         .unwrap_or_else(default_config_path);
 
-    if !resolved_path.exists() {
-        return Ok(LoadedConfig {
-            path: resolved_path,
-            config: AppConfig::default(),
-        });
-    }
-
-    let contents = fs::read_to_string(&resolved_path)
-        .with_context(|| format!("failed to read config file {}", resolved_path.display()))?;
+    let contents = match fs::read_to_string(&resolved_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && path.is_none() => {
+            return Ok(LoadedConfig {
+                path: resolved_path,
+                config: AppConfig::default(),
+            });
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("failed to read config file {}", resolved_path.display())
+            });
+        }
+    };
     let config: AppConfig = toml::from_str(&contents)
         .with_context(|| format!("failed to parse config file {}", resolved_path.display()))?;
     validate_config(&config)?;
@@ -117,6 +134,7 @@ pub fn load_config(path: Option<&Path>) -> Result<LoadedConfig> {
 }
 
 pub fn validate_config(config: &AppConfig) -> Result<()> {
+    config.settings.validate()?;
     let mut ids = BTreeSet::new();
     for resolver in &config.servers {
         if !ids.insert(resolver.id.clone()) {

@@ -4,7 +4,7 @@ mod config;
 mod dns;
 mod output;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -82,7 +82,7 @@ async fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn display_path(path: &PathBuf) -> String {
+fn display_path(path: &Path) -> String {
     path.display().to_string()
 }
 
@@ -94,6 +94,7 @@ fn filter_resolvers(
 ) -> Vec<config::ResolverConfig> {
     resolvers
         .into_iter()
+        .filter(|resolver| resolver.enabled)
         .filter(|resolver| {
             region
                 .map(|value| resolver.region.eq_ignore_ascii_case(value))

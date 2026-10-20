@@ -91,10 +91,16 @@ pub async fn run_check(
     resolvers: Vec<ResolverConfig>,
     settings: &SettingsConfig,
 ) -> Result<CheckReport> {
+    settings.validate()?;
     let fqdn = ensure_fqdn(name)?;
     let settings = Arc::new(settings.clone());
 
-    let mut results: Vec<QueryReport> = stream::iter(resolvers.into_iter().filter(|r| r.enabled))
+    let resolvers: Vec<_> = resolvers.into_iter().filter(|r| r.enabled).collect();
+    if resolvers.is_empty() {
+        bail!("no enabled resolvers matched the supplied filters");
+    }
+
+    let mut results: Vec<QueryReport> = stream::iter(resolvers)
         .map(|resolver| {
             let fqdn = fqdn.clone();
             let settings = Arc::clone(&settings);
@@ -117,6 +123,7 @@ pub async fn run_check(
 }
 
 pub async fn trace_parent(name: &str, settings: &SettingsConfig) -> Result<ParentTraceReport> {
+    settings.validate()?;
     let fqdn = ensure_fqdn(name)?;
     let trimmed = fqdn.to_utf8();
     let tld = trimmed
@@ -427,6 +434,50 @@ mod tests {
     use super::*;
     use hickory_proto::rr::Name;
     use hickory_proto::rr::rdata::{A, CNAME};
+
+    #[tokio::test]
+    async fn rejects_invalid_settings_before_querying() {
+        for settings in [
+            SettingsConfig {
+                concurrency: 0,
+                ..SettingsConfig::default()
+            },
+            SettingsConfig {
+                timeout_ms: 0,
+                ..SettingsConfig::default()
+            },
+        ] {
+            assert!(
+                run_check("example.com", RecordType::A, vec![], &settings)
+                    .await
+                    .is_err()
+            );
+            assert!(trace_parent("example.com", &settings).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_an_empty_enabled_resolver_selection() {
+        let disabled = ResolverConfig {
+            id: "disabled".into(),
+            name: "Disabled".into(),
+            address: "127.0.0.1".parse().unwrap(),
+            region: "local".into(),
+            country: "XX".into(),
+            provider: "Test".into(),
+            enabled: false,
+            tags: vec![],
+        };
+        let error = run_check(
+            "example.com",
+            RecordType::A,
+            vec![disabled],
+            &SettingsConfig::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no enabled resolvers"));
+    }
 
     #[test]
     fn normalizes_a_and_cname_answers() {
