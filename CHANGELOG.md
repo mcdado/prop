@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.2 - 2026-10-20
+
+### Security
+
+- Migrate to `hickory-net` and `hickory-proto` 0.26.3 to fix the DNS message encoding CPU exhaustion advisory (RUSTSEC-2026-0119).
+- Replace the vulnerable `rand` 0.8.5 dependency with 0.10.3 (RUSTSEC-2026-0097).
+- Update `anyhow` to 1.0.103 to fix the `Error::downcast_mut()` soundness advisory (RUSTSEC-2026-0190).
+
+### Fixes
+
+- Preserve recursion flags, EDNS, negative responses, and the configured query timeout when using the new UDP and TCP clients.
+- Increase mock network exchange timeouts for shared Windows CI runners and report client failures before waiting for the mock server. CI repeats the affected regression test ten times on Windows.
+
+Building from source now requires Rust 1.88 or newer.
+
 ## 0.1.1 - 2026-10-20
 
 First public release of `prop`, a standalone DNS propagation CLI.
