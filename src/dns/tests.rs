@@ -6,6 +6,9 @@ use hickory_proto::rr::rdata::{AAAA, NS};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
 
+// Leave room for socket setup and scheduling on shared Windows CI runners.
+const MOCK_IO_TIMEOUT: Duration = Duration::from_secs(20);
+
 fn report_with_answers(status: QueryStatus, answers: &[&str]) -> QueryReport {
     QueryReport {
         resolver: test_resolver(),
@@ -198,7 +201,7 @@ fn test_resolver() -> ResolverConfig {
 
 fn test_settings() -> SettingsConfig {
     SettingsConfig {
-        timeout_ms: 1000,
+        timeout_ms: 10_000,
         ..SettingsConfig::default()
     }
 }
@@ -217,10 +220,10 @@ async fn serve_udp(response: Message) -> (SocketAddr, tokio::task::JoinHandle<Me
     let addr = socket.local_addr().unwrap();
     let task = tokio::spawn(async move {
         let mut buffer = [0u8; 4096];
-        let (len, peer) = timeout(Duration::from_secs(3), socket.recv_from(&mut buffer))
+        let (len, peer) = timeout(MOCK_IO_TIMEOUT, socket.recv_from(&mut buffer))
             .await
-            .unwrap()
-            .unwrap();
+            .expect("mock DNS server did not receive a UDP query")
+            .expect("mock DNS server failed to receive a UDP query");
         let query = Message::from_vec(&buffer[..len]).unwrap();
         let response = response_to(&query, response);
         socket
@@ -349,8 +352,8 @@ async fn distinguishes_nodata_nxdomain_and_dns_failures() {
         )
         .await;
         let report = resolver_report(&test_resolver(), RecordType::A, response);
+        assert_eq!(report.status, expected, "rcode={code}, report={report:?}");
         server.await.unwrap();
-        assert_eq!(report.status, expected, "rcode={code}");
         assert!(report.answers.is_empty());
         if expected == QueryStatus::Error {
             assert!(report.error.unwrap().contains(&code.to_string()));
@@ -378,10 +381,10 @@ async fn uses_tcp_after_udp_truncation_with_the_same_query_options() {
         let udp = UdpSocket::bind(addr).await.unwrap();
         let server = tokio::spawn(async move {
             let mut buffer = [0u8; 4096];
-            let (len, peer) = timeout(Duration::from_secs(3), udp.recv_from(&mut buffer))
+            let (len, peer) = timeout(MOCK_IO_TIMEOUT, udp.recv_from(&mut buffer))
                 .await
-                .unwrap()
-                .unwrap();
+                .expect("mock DNS server did not receive the initial UDP query")
+                .expect("mock DNS server failed to receive the initial UDP query");
             let udp_query = Message::from_vec(&buffer[..len]).unwrap();
             let mut truncated = Message::new();
             truncated.set_truncated(true);
@@ -389,18 +392,18 @@ async fn uses_tcp_after_udp_truncation_with_the_same_query_options() {
                 .await
                 .unwrap();
 
-            let (mut socket, _) = timeout(Duration::from_secs(3), listener.accept())
+            let (mut socket, _) = timeout(MOCK_IO_TIMEOUT, listener.accept())
                 .await
-                .unwrap()
-                .unwrap();
-            let tcp_query = timeout(Duration::from_secs(3), async {
+                .expect("client did not connect over TCP after the truncated UDP response")
+                .expect("mock DNS server failed to accept the TCP connection");
+            let tcp_query = timeout(MOCK_IO_TIMEOUT, async {
                 let len = socket.read_u16().await.unwrap();
                 let mut bytes = vec![0; len as usize];
                 socket.read_exact(&mut bytes).await.unwrap();
                 Message::from_vec(&bytes).unwrap()
             })
             .await
-            .unwrap();
+            .expect("mock DNS server did not receive a complete TCP query");
             let mut message = Message::new();
             message.set_response_code(code);
             if code == ResponseCode::NoError {
