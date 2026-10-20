@@ -56,7 +56,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          source <(target/debug/prop completions bash)
+          eval "$(target/debug/prop completions bash)"
           COMP_WORDS=(prop check example.com --record-type t)
           COMP_CWORD=4
           _prop prop t --record-type

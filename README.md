@@ -76,7 +76,7 @@ Until the next release, install from source to use shell completions.
 Run this in Bash to activate completions for the current session. Add the same line to your Bash startup file (usually `~/.bashrc`) to enable them in future sessions:
 
 ```bash
-source <(prop completions bash)
+eval "$(prop completions bash)"
 ```
 
 #### Zsh
