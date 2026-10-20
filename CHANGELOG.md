@@ -1,0 +1,22 @@
+# Changelog
+
+## 0.1.1 - 2026-10-20
+
+First public release of `prop`, a standalone DNS propagation CLI.
+
+### Features
+
+- Compare A, AAAA, CNAME, MX, NS, and TXT records across a built-in public resolver catalog.
+- Filter resolvers by region, provider, or tag, and customize the catalog through TOML.
+- Trace parent-zone delegations through root and TLD nameservers.
+- Show tables or structured JSON, including query timing, TTLs, consensus, and errors.
+- Download prebuilt binaries for macOS, Linux, and Windows, with shell and PowerShell installers and SHA-256 checksums.
+
+### Fixes
+
+- Read parent delegation nameservers from authority responses and send non-recursive queries to authorities.
+- Distinguish NXDOMAIN, missing records, and DNS failures such as SERVFAIL and REFUSED.
+- Preserve query options when falling back from truncated UDP replies to TCP.
+- Reject zero timeout/concurrency settings, missing explicit configuration files, and selections without enabled resolvers.
+- Compute consensus from complete responses with a strict majority, keeping negative answers distinct.
+- Reassemble TXT chunks without artificial spaces and normalize hostname case in CNAME, NS, and MX answers.

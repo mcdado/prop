@@ -2,6 +2,9 @@
 name = "prop"
 version = "0.1.1"
 edition = "2024"
+description = "Fast DNS propagation checks and parent-zone delegation tracing"
+repository = "https://github.com/mcdado/prop"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0"
@@ -18,3 +21,8 @@ toml = "0.8"
 
 [dev-dependencies]
 tokio = { version = "1.43", features = ["io-util"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

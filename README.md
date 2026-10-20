@@ -4,6 +4,14 @@
 
 ## Installation
 
+### Prebuilt releases
+
+Download the archive for your platform from [GitHub Releases](https://github.com/mcdado/prop/releases), verify its SHA-256 checksum, extract it, and put `prop` (or `prop.exe` on Windows) in a directory on your `PATH`.
+
+Release builds cover macOS Apple Silicon and Intel, Linux ARM64 and x86-64 (GNU), Linux x86-64 (musl), and Windows x86-64. Each release also includes shell and PowerShell installers. Draft releases and their assets are visible only to repository collaborators until published.
+
+### Build from source
+
 Install Rust and Cargo with a toolchain that supports Rust edition 2024, then run this command from the project directory:
 
 ```bash
@@ -162,3 +170,33 @@ tags = ["disabled"]
 - Queries run over UDP with TCP fallback when a response is truncated.
 - `check` distinguishes successful answers (`success` in JSON), missing records (`no_records`), nonexistent domains (`nxdomain`), and query failures (`error`, including DNS `SERVFAIL` and `REFUSED`). Errors are also shown in table output.
 - `trace-parent` sends non-recursive queries to the root and TLD authorities and reads delegation nameservers from the authority section, with any associated IPv4/IPv6 glue.
+
+## Development and releases
+
+CI runs tests on Linux, macOS, and Windows, plus formatting, Clippy, and release configuration checks. The same checks gate release builds.
+
+Distribution is configured in `dist-workspace.toml` using cargo-dist **0.33.0**. To install that development tool, run `cargo install cargo-dist --version 0.33.0 --locked`.
+
+After changing the distribution configuration or upgrading cargo-dist, regenerate and verify the workflow with:
+
+```bash
+node scripts/generate-release.mjs
+node scripts/generate-release.mjs --check
+dist plan
+```
+
+Use this script instead of `dist generate` for CI generation. It applies the project's draft-only policy to cargo-dist's generated workflow; CI checks that this adaptation is up to date. Existing published releases are never modified by the workflow, and reruns can update an existing draft.
+
+To prepare a release:
+
+1. Update the package version in `Cargo.toml` and `Cargo.lock`, and add release notes to `CHANGELOG.md`.
+2. Commit and push to `main`, and wait for CI to pass.
+3. Create and push an annotated tag matching the version, for example:
+
+   ```bash
+   git tag -a v0.1.1 -m "prop 0.1.1"
+   git push origin v0.1.1
+   ```
+
+4. Wait for the Release workflow to build the archives, installers, source package, and checksums and attach them to a **draft** GitHub Release.
+5. Review the release notes and downloads, then publish the draft explicitly from GitHub when ready.
