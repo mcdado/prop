@@ -30,7 +30,10 @@ async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Commands::Check(args) => {
-            let (loaded, resolvers) = load()?;
+            let (mut loaded, resolvers) = load()?;
+            if let Some(timeout_ms) = args.timing.timeout_ms {
+                loaded.config.settings.timeout_ms = timeout_ms;
+            }
             let filtered = filter_resolvers(
                 resolvers,
                 args.region.as_deref(),
@@ -55,7 +58,10 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::TraceParent(args) => {
-            let (loaded, _) = load()?;
+            let (mut loaded, _) = load()?;
+            if let Some(timeout_ms) = args.timing.timeout_ms {
+                loaded.config.settings.timeout_ms = timeout_ms;
+            }
             let report = trace_parent(&args.name, &loaded.config.settings).await?;
             if args.json || loaded.config.settings.output == OutputFormat::Json {
                 print_json(&report)?;
@@ -138,6 +144,26 @@ fn filter_resolvers(
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn filters_european_resolvers_with_preserved_country_tags() {
+        let resolvers = catalog::builtin_resolvers();
+        let european = filter_resolvers(resolvers.clone(), Some("EUROPE"), None, None);
+        for country in ["IT", "FR", "ES", "SM"] {
+            let expected = resolvers.iter().filter(|r| r.country == country).count();
+            assert!(expected > 0);
+            assert_eq!(
+                european.iter().filter(|r| r.country == country).count(),
+                expected
+            );
+        }
+        let italian = filter_resolvers(resolvers.clone(), Some("europe"), None, Some("italy"));
+        assert!(!italian.is_empty());
+        assert!(italian.iter().all(|r| r.country == "IT"));
+        let global = filter_resolvers(resolvers, Some("global"), Some("Google"), None);
+        assert_eq!(global.len(), 2);
+        assert!(global.iter().all(|r| r.country == "US"));
+    }
 
     #[test]
     fn filters_resolvers_by_region_provider_and_tag() {

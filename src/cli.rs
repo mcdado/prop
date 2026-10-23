@@ -66,6 +66,8 @@ pub struct CheckArgs {
     /// DNS record type to query
     #[arg(long, value_enum, default_value_t = RecordTypeArg::A)]
     pub record_type: RecordTypeArg,
+    #[command(flatten)]
+    pub timing: QueryTimingArgs,
     /// Print the report as JSON
     #[arg(long)]
     pub json: bool,
@@ -84,9 +86,18 @@ pub struct CheckArgs {
 pub struct TraceParentArgs {
     /// Domain name whose parent delegation should be queried
     pub name: String,
+    #[command(flatten)]
+    pub timing: QueryTimingArgs,
     /// Print the parent trace as JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct QueryTimingArgs {
+    /// Per-query timeout in milliseconds (overrides config; default: 3000)
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Args)]

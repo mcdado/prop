@@ -115,6 +115,7 @@ These startup commands generate completions from the installed `prop`, so they p
 prop check example.com
 prop check example.com --record-type txt --json
 prop check example.com --region asia --provider Google
+prop check example.com --record-type ns --timeout-ms 10000
 prop trace-parent example.com
 prop servers --all
 prop config --validate
@@ -138,12 +139,17 @@ Check DNS propagation for the required domain name across public resolvers.
 | Option | Description |
 | --- | --- |
 | `--record-type <RECORD_TYPE>` | Record type: `a`, `aaaa`, `cname`, `mx`, `ns`, or `txt`. Default: `a`. |
+| `--timeout-ms <TIMEOUT_MS>` | Per-query timeout in milliseconds. Overrides `settings.timeout_ms`; built-in default: `3000`. Must be greater than zero. |
 | `--json` | Print the report as JSON. |
 | `--region <REGION>` | Only query resolvers in the specified region. |
 | `--provider <PROVIDER>` | Only query resolvers from the specified provider. |
 | `--tag <TAG>` | Only query resolvers with the specified tag. |
 
 Region, provider, and tag filters match complete values without regard to case. When combined, all filters must match. Use `prop servers --json` to inspect resolver metadata and available filter values.
+
+The built-in catalog uses geographic regions such as `europe`, `asia`, and `north-america`, with `global` for resolvers marked as global. Tables display the region and ISO country code together, for example `europe/IT` or `global/US`. To select a country, use its tag, for example `--region europe --tag italy`. Country names (`italy`, `france`, `spain`, `san-marino`) are no longer region values; their existing tags remain available. Custom resolver metadata and overrides keep the values configured in TOML.
+
+In table output, the query and consensus summary appears below the resolver results.
 
 Consensus compares complete normalized answer sets and requires a strict majority of valid DNS responses. Timeouts and DNS errors do not vote; empty responses and `NXDOMAIN` vote separately. A tie or any other result without a strict majority produces no consensus, rather than combining records from different resolvers.
 
@@ -158,6 +164,7 @@ Query the parent TLD nameservers for the required domain's delegation.
 | Option | Description |
 | --- | --- |
 | `--json` | Print the parent trace as JSON. |
+| `--timeout-ms <TIMEOUT_MS>` | Per-query timeout in milliseconds. Overrides `settings.timeout_ms`; built-in default: `3000`. Must be greater than zero. |
 
 ### `servers`
 
@@ -198,11 +205,13 @@ prop --config ./example-config.toml check example.com
 
 `settings.timeout_ms` and `settings.concurrency` must be greater than zero. A `check` command whose filters match no enabled resolvers exits with an error.
 
+The built-in query timeout is 3000 ms. Set `settings.timeout_ms` to change it persistently, or pass `--timeout-ms` to `check` or `trace-parent` for a single run. The command-line value takes precedence over the configuration file. This limit applies to each query, rather than to the entire command.
+
 Example:
 
 ```toml
 [settings]
-timeout_ms = 2500
+timeout_ms = 3000
 concurrency = 16
 output = "table"
 

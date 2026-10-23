@@ -89,6 +89,7 @@ pub fn print_check_table(report: &CheckReport) {
         Some(QueryStatus::NxDomain) => "NXDOMAIN",
         _ => "no agreed response",
     };
+    println!("{table}");
     println!(
         "Query: {} {} | Consensus: {} ({}/{} valid responses; {}) | Consensus answers: {}",
         report.name,
@@ -103,7 +104,6 @@ pub fn print_check_table(report: &CheckReport) {
             report.consensus.answers.join(", ")
         }
     );
-    println!("{table}");
 }
 
 pub fn print_parent_trace_table(report: &ParentTraceReport) {

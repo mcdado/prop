@@ -130,7 +130,15 @@ fn generates_shell_completions_without_loading_invalid_configuration() {
         for command in ["check", "trace-parent", "servers", "config", "completions"] {
             assert!(script.contains(command), "{shell}: missing {command}");
         }
-        for option in ["record-type", "region", "provider", "tag", "json", "config"] {
+        for option in [
+            "record-type",
+            "region",
+            "provider",
+            "tag",
+            "json",
+            "config",
+            "timeout-ms",
+        ] {
             assert!(script.contains(option), "{shell}: missing {option}");
         }
         // The standard PowerShell generator completes names, not argument values.
@@ -170,5 +178,23 @@ fn requires_a_supported_shell_for_completions() {
         assert!(output.stdout.is_empty());
         let error = String::from_utf8(output.stderr).unwrap();
         assert!(error.contains("<SHELL>"));
+    }
+}
+
+#[test]
+fn rejects_invalid_command_line_timeouts() {
+    let config = TestConfig::new("");
+    for command in ["check", "trace-parent"] {
+        for value in ["0", "-1", "invalid", "18446744073709551616"] {
+            let option = format!("--timeout-ms={value}");
+            let output = config.run(&[command, "example.com", &option]);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{command} {option}: {output:?}"
+            );
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("--timeout-ms"));
+        }
     }
 }

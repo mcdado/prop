@@ -203,7 +203,7 @@ fn default_true() -> bool {
 }
 
 fn default_timeout_ms() -> u64 {
-    2_500
+    3_000
 }
 
 fn default_concurrency() -> usize {
@@ -218,6 +218,17 @@ fn default_output_format() -> OutputFormat {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn uses_three_second_timeout_unless_configured() {
+        assert_eq!(SettingsConfig::default().timeout_ms, 3_000);
+        let defaults: AppConfig = toml::from_str("").unwrap();
+        assert_eq!(defaults.settings.timeout_ms, 3_000);
+        let partial: AppConfig = toml::from_str("[settings]\nconcurrency = 16\n").unwrap();
+        assert_eq!(partial.settings.timeout_ms, 3_000);
+        let custom: AppConfig = toml::from_str("[settings]\ntimeout_ms = 2500\n").unwrap();
+        assert_eq!(custom.settings.timeout_ms, 2_500);
+    }
 
     #[test]
     fn merges_builtin_override_and_custom_resolvers() {

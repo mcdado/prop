@@ -1,5 +1,5 @@
 [settings]
-timeout_ms = 2500
+timeout_ms = 3000
 concurrency = 16
 output = "table"
 

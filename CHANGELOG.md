@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Print the query and consensus summary below the resolver table.
+- Use geographic regions instead of country names in the built-in catalog (for example, `europe/IT`); keep existing country tags for filtering.
+- Increase the default per-query timeout from 2500 to 3000 ms and add `--timeout-ms` to `check` and `trace-parent` to override the configured value for one run.
+
 ## 0.1.3 - 2026-10-20
 
 - Add `prop completions <SHELL>` for Bash, Zsh, Fish, and PowerShell, with activation instructions in the README.
