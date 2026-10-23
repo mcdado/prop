@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add 13 enabled resolver endpoints: Control D Unfiltered, DNS4EU Unfiltered, DNSPod, Yandex Basic, Hurricane Electric, the unfiltered AdGuard and Quad9 variants, and DNS.SB's secondary address. Tag the explicitly unfiltered variants for selection with `--tag unfiltered`.
 - Print the query and consensus summary below the resolver table.
 - Use geographic regions instead of country names in the built-in catalog (for example, `europe/IT`); keep existing country tags for filtering.
 - Increase the default per-query timeout from 2500 to 3000 ms and add `--timeout-ms` to `check` and `trace-parent` to override the configured value for one run.

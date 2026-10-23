@@ -149,6 +149,21 @@ Region, provider, and tag filters match complete values without regard to case. 
 
 The built-in catalog uses geographic regions such as `europe`, `asia`, and `north-america`, with `global` for resolvers marked as global. Tables display the region and ISO country code together, for example `europe/IT` or `global/US`. To select a country, use its tag, for example `--region europe --tag italy`. Country names (`italy`, `france`, `spain`, `san-marino`) are no longer region values; their existing tags remain available. Custom resolver metadata and overrides keep the values configured in TOML.
 
+The catalog includes the following additional endpoints, enabled by default:
+
+| Provider / variant | IPv4 addresses | Official reference |
+| --- | --- | --- |
+| Control D Unfiltered | `76.76.2.0`, `76.76.10.0` | [Free resolvers](https://docs.controld.com/docs/free-dns) |
+| DNS4EU Unfiltered | `86.54.11.100`, `86.54.11.200` | [Public service](https://joindns4.eu/for-public) |
+| DNSPod | `119.29.29.29` | [Public DNS](https://docs.dnspod.com/public-dns/public-dns-introduction/) |
+| Yandex Basic | `77.88.8.8`, `77.88.8.1` | [Public DNS](https://dns.yandex.ru/) |
+| Hurricane Electric | `74.82.42.42` | [Public recursor](https://forums.he.net/index.php?topic=3996.0) |
+| AdGuard Unfiltered | `94.140.14.140`, `94.140.14.141` | [Public servers](https://adguard-dns.io/en/public-dns.html) |
+| Quad9 Unfiltered | `9.9.9.10`, `149.112.112.10` | [Service variants](https://docs.quad9.net/services/) |
+| DNS.SB Secondary | `45.11.45.11` | [Setup guide](https://dns.sb/guide/) |
+
+The new Control D, DNS4EU, AdGuard, Quad9, and Yandex variants have an `unfiltered` tag. For example, `--provider AdGuard --tag unfiltered` selects only AdGuard's non-filtering endpoints; existing AdGuard and Quad9 entries remain available. DNS4EU's unfiltered service still applies court-ordered blocks. Region and country metadata for distributed services describe the service's scope and operator, not the physical node answering a query; DNS4EU uses `europe/CZ` for its Czech operator, Whalebone.
+
 In table output, the query and consensus summary appears below the resolver results.
 
 Consensus compares complete normalized answer sets and requires a strict majority of valid DNS responses. Timeouts and DNS errors do not vote; empty responses and `NXDOMAIN` vote separately. A tie or any other result without a strict majority produces no consensus, rather than combining records from different resolvers.
