@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 - 2026-10-23
 
 - Add 13 enabled resolver endpoints: Control D Unfiltered, DNS4EU Unfiltered, DNSPod, Yandex Basic, Hurricane Electric, the unfiltered AdGuard and Quad9 variants, and DNS.SB's secondary address. Tag the explicitly unfiltered variants for selection with `--tag unfiltered`.
 - Print the query and consensus summary below the resolver table.
